@@ -1,17 +1,3 @@
-"""
-Video Downloader Backend
-- FastAPI server wrapping yt-dlp
-- Uses aria2c as external downloader for multi-connection (faster) downloads
-- Streams the downloaded file back to the browser
-
-Run locally:
-    pip install -r requirements.txt
-    # install ffmpeg and aria2 on your system (see README)
-    uvicorn main:app --host 0.0.0.0 --port 8000
-
-Deploy this part on Railway / Render / a VPS (NOT Vercel).
-"""
-
 import os
 import uuid
 import shutil
@@ -76,6 +62,7 @@ async def get_info(req: InfoRequest):
         "quiet": True,
         "no_warnings": True,
         "skip_download": True,
+        "noplaylist": True, # Prevents hanging on playlist URLs
     }
     try:
         loop = asyncio.get_event_loop()
@@ -120,10 +107,11 @@ async def get_info(req: InfoRequest):
         )
 
     # Add convenient "best video+audio at this resolution" merged options
+    # Updated to match the robust fallback logic from your working script
     heights = sorted({f["height"] for f in formats if f["height"]}, reverse=True)
     merged = [
         {
-            "format_id": f"bv*[height<={h}]+ba/b[height<={h}]",
+            "format_id": f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best",
             "label": f"{h}p (best, merged)",
             "ext": "mp4",
             "height": h,
@@ -161,8 +149,7 @@ async def download(req: DownloadRequest):
         "quiet": True,
         "no_warnings": True,
         "merge_output_format": "mp4",
-        # Re-encode merged output container to mp4 for compatibility
-        "postprocessors": [{"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"}],
+        "noplaylist": True, # Prevents downloading entire playlists accidentally
     }
 
     if ARIA2_AVAILABLE:
@@ -179,7 +166,9 @@ async def download(req: DownloadRequest):
 
     try:
         loop = asyncio.get_event_loop()
-        info = await loop.run_in_executor(
+        # We don't strictly need `extract_info` output, so we discard it.
+        # It handles the download automatically due to download=True
+        await loop.run_in_executor(
             None, lambda: yt_dlp.YoutubeDL(ydl_opts).extract_info(req.url, download=True)
         )
     except Exception as e:
